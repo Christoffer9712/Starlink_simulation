@@ -1,0 +1,14 @@
+# Data directories
+**/data/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Other caches
+.cache/
+**/.cache/
+
+# Large output file
+*.html
