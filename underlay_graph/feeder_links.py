@@ -3,10 +3,15 @@ feeder_links.py
 
 Gateway-satellite feeder links over time.
 
-Every NETWORK_UPDATE_INTERVAL seconds each gateway selects the closest
-satellites above the minimum elevation (optionally at most max_per_gateway).
-Between updates the links are kept; a link breaks when its satellite drops
-below the minimum elevation, and is not replaced until the next update.
+At every network update each gateway selects the closest satellites above
+the minimum elevation (optionally at most max_per_gateway). Between updates
+the links are kept; a link breaks when its satellite drops below the minimum
+elevation, and is not replaced until the next update.
+
+Network updates happen either
+  * at given ground-truth times (update_times, e.g. derived from measured
+    RTT steps), or
+  * every update_interval_s seconds, counted from the first time step.
 
 Results use the same pair format as find_isl_pairs, one list per time step:
     feeder_links[i] = [[gateway_name, satellite_name], ...]  at unix_s[i]
@@ -14,9 +19,12 @@ Results use the same pair format as find_isl_pairs, one list per time step:
 Usage:
     feeder_links = find_feeder_links(bb_operating_satrec_by_name, sc.gateways,
                                      sc.unix_s, max_per_gateway=8)
+    feeder_links = find_feeder_links(bb_operating_satrec_by_name, sc.gateways,
+                                     sc.unix_s, max_per_gateway=8,
+                                     update_times=update_times)
 """
 import math
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 from sgp4.api import SatrecArray
@@ -32,7 +40,8 @@ UNIX_EPOCH_JD = 2440587.5
 def find_feeder_links(satrec_by_name, gateways, unix_s,
                       min_elev_deg: float = MIN_GW_ELEV_DEG,
                       max_per_gateway: Optional[int] = None,
-                      update_interval_s: float = NETWORK_UPDATE_INTERVAL):
+                      update_interval_s: float = NETWORK_UPDATE_INTERVAL,
+                      update_times: Optional[Sequence[float]] = None):
     """Return a list with one entry per time step: [[gateway, satellite], ...].
 
     satrec_by_name    -- {name: Satrec} of the satellites to consider
@@ -42,11 +51,16 @@ def find_feeder_links(satrec_by_name, gateways, unix_s,
     min_elev_deg      -- minimum elevation of the satellite seen from the gateway
     max_per_gateway   -- at each update, keep at most this many (closest)
                          satellites per gateway; None keeps all visible ones
-    update_interval_s -- gateways reselect satellites at this interval
+    update_interval_s -- interval between updates when update_times is None
+    update_times      -- ground-truth update times (Unix seconds). Gateways
+                         reselect at the first time step at or after each of
+                         them. The first time step always selects links.
     """
     unix_s = np.atleast_1d(np.asarray(unix_s, dtype=float))
     if not satrec_by_name or len(gateways) == 0:
         return [[] for _ in unix_s]
+
+    update_index = make_update_index(unix_s, update_interval_s, update_times)
 
     sat_names = np.array(list(satrec_by_name))
     sat_array = SatrecArray([satrec_by_name[n] for n in sat_names])
@@ -63,7 +77,7 @@ def find_feeder_links(satrec_by_name, gateways, unix_s,
     last_update = None
     for t in unix_s:
         sat_xyz, ok = satellite_positions_ecef(sat_array, t)            # (N, 3), (N,)
-        update = math.floor((t - unix_s[0]) / update_interval_s)
+        update = update_index(t)
 
         if update != last_update:
             # Network update: every gateway picks its closest visible satellites
@@ -80,6 +94,19 @@ def find_feeder_links(satrec_by_name, gateways, unix_s,
         links_per_step.append(sorted([[gw_names[g], sat_names[s]]
                                       for s, g in zip(sat_idx, gw_idx)]))
     return links_per_step
+
+
+def make_update_index(unix_s, update_interval_s, update_times):
+    """Function t -> number of the network update period that t falls in.
+
+    A change of this number between two time steps triggers a reselection.
+    """
+    if update_times is None:
+        start = unix_s[0]
+        return lambda t: math.floor((t - start) / update_interval_s)
+
+    times = np.sort(np.asarray(update_times, dtype=float))
+    return lambda t: int(np.searchsorted(times, t, side="right"))   # updates at or before t
 
 
 def satellite_positions_ecef(sat_array, unix_time):

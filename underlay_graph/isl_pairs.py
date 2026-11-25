@@ -1,77 +1,55 @@
 """
 isl_pairs.py
 
-Likely intra-plane laser ISLs between Starlink satellites.
-
-Each laser-capable satellite links to its neighbours ahead and behind in the
-same orbital plane. Planes, and the order of satellites along each plane,
-come from operational.find_planes. Links are bidirectional, so each pair
-appears once.
+Likely intra-plane laser ISLs: each laser-capable satellite links to its
+neighbours ahead and behind in the same orbital plane.
 
 Usage:
-    shells = find_shells(...)
-    find_planes(shells, satrec_by_name, when)
-    pairs = find_isl_pairs(shells, satrec_by_name, version_by_name, when)
+    planes, plane_by_name, unassigned = find_planes(satrec_in_shell, when)
+    shell.planes = planes                      # for every shell
+    pairs = find_intra_isl_pairs(shells, satrec_by_name, version_by_name, when)
 """
-from datetime import datetime
-from typing import Optional
-
 import numpy as np
 
-from simulation_param import *
-from underlay_graph.util import newest_epoch, to_julian
+from simulation_param import MAX_LINK_RANGE_KM
+from underlay_graph.util import to_julian
 
-LASER_VERSIONS = {"v1.5", "v2 mini", "v3"}
+LASER_VERSIONS = {"v1.5", "v2 mini", "v3"}       # v1.0 has no lasers
 
 
-def find_isl_pairs(shells, satrec_by_name, version_by_name,
-                   when: Optional[datetime] = None):
-    """Return [[name_a, name_b], ...] for likely intra-plane laser ISLs.
-
-    shells          -- shells with planes filled in by find_planes
-    satrec_by_name  -- {name: Satrec}, used for the link-range check
-    version_by_name -- {name: version}; only laser-capable versions get links
-    when            -- UTC datetime; use the same as for find_planes
-    """
-    names = [n for shell in shells for plane in shell.planes for n in plane.names]
-    if not names:
-        return []
-    jd, fr = (to_julian(when) if when
-              else newest_epoch(satrec_by_name[n] for n in names))
-
+def find_intra_isl_pairs(shells, satrec_by_name, version_by_name, when):
+    """Return [(name_a, name_b), ...] for likely intra-plane laser ISLs, each pair once."""
+    jd, fr = to_julian(when)
     pairs = []
     for shell in shells:
         for plane in shell.planes:
-            if len(plane.names) < MIN_PLANE_SATELLITES:
-                continue                  # satellites in transit between planes
-            ring = [n for n in plane.names if has_laser_isl(version_by_name.get(n))]
-            pairs += ring_links(ring, satrec_by_name, jd, fr)
+            lasers = [n for n in plane.sat_names if version_by_name.get(n) in LASER_VERSIONS]
+            pairs += ring_links(lasers, satrec_by_name, jd, fr)
     return sorted(pairs)
 
 
-def has_laser_isl(version):
-    return version in LASER_VERSIONS
+def ring_links(names, satrec_by_name, jd, fr):
+    """Order satellites along the plane and link each to the next, closing the ring."""
+    pos = {}
+    for n in names:
+        err, r, v = satrec_by_name[n].sgp4(jd, fr)
+        if not err:
+            pos[n] = (np.array(r), np.array(v))
+    ring = sorted(pos, key=lambda n: arg_of_latitude(*pos[n]))
 
-
-def ring_links(ring, satrec_by_name, jd, fr):
-    """Link consecutive satellites along the plane, closing the ring."""
     if len(ring) < 2:
         return []
-    neighbours = list(zip(ring, ring[1:] + ring[:1]))
+    neighbours = list(zip(ring, ring[1:] + ring[:1]))     # the last one links back to the first
     if len(ring) == 2:
-        neighbours = neighbours[:1]               # avoid listing a-b twice
-    return [sorted([a, b]) for a, b in neighbours
-            if link_range_km(satrec_by_name[a], satrec_by_name[b], jd, fr)
-            <= MAX_LINK_RANGE_KM]
+        neighbours = neighbours[:1]                       # don't list a-b twice
+    return [tuple(sorted((a, b))) for a, b in neighbours
+            if np.linalg.norm(pos[a][0] - pos[b][0]) <= MAX_LINK_RANGE_KM]
 
 
-def link_range_km(satrec_a, satrec_b, jd, fr):
-    """Distance between two satellites in km (inf if either can't be propagated).
-
-    SGP4's TEME positions are used directly: distances are the same in ECEF.
-    """
-    error_a, r_a, _ = satrec_a.sgp4(jd, fr)
-    error_b, r_b, _ = satrec_b.sgp4(jd, fr)
-    if error_a or error_b:
-        return float("inf")
-    return float(np.linalg.norm(np.subtract(r_a, r_b)))
+def arg_of_latitude(r, v):
+    """Angle along the orbit from the ascending node, in degrees (0..360)."""
+    h = np.cross(r, v)
+    node = np.array([-h[1], h[0], 0.0])                   # points to the ascending node
+    node /= np.linalg.norm(node)
+    ahead = np.cross(h, node) / np.linalg.norm(h)         # 90° further along the orbit
+    return np.degrees(np.arctan2(r @ ahead, r @ node)) % 360

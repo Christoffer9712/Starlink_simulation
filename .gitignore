@@ -12,3 +12,6 @@ __pycache__/
 
 # Large output file
 *.html
+
+# Figures
+*.png

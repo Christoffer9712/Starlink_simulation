@@ -43,7 +43,7 @@ def find_ground_links(gateways, pops, pop_neighbours: int = 2):
 
 def pop_labels(pops):
     """PoP names: the 'name' column if there is one, else 'city'."""
-    return list(pops["name"] if "name" in pops else pops["city"])
+    return list(pops["code"])
 
 
 def unit_vectors(lat_deg, lon_deg):

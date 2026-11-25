@@ -10,7 +10,7 @@ YOUNG_REVS = 1500                 # ~100 days after launch at ~15.5 rev/day
 
 # A shell = at least this many other satellites with similar inclination and altitude
 SHELL_MIN_SATELLITES = 60         # above the size of one launch batch
-SHELL_INCLINATION_TOL_DEG = 0.2
+SHELL_INCLINATION_TOL_DEG = 0.01
 SHELL_ALTITUDE_TOL_KM = 3.0
 
 # Same slot = closer than this and moving together
@@ -38,3 +38,6 @@ MIN_PLANE_SATELLITES = 4                 # smaller "planes" = satellites in tran
 NETWORK_UPDATE_INTERVAL = 15.0    # s, gateways reselect their satellites at this interval
 
 MIN_GW_ELEV_DEG = 25.0            # minimum elevation for a gateway-satellite feeder link
+MIN_AIRCRAFT_ELEV_DEG = 25.0      # minimum elevation for an aircraft-satellite link
+
+MAX_INTER_ISL_REL_SPEED_KM_S = 1.0   # inter-plane ISLs only between satellites moving almost in parallel
